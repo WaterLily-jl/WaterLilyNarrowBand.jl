@@ -1,6 +1,6 @@
 module WaterLilyNarrowBand
 
-using WaterLily, StaticArrays, Adapt
+using WaterLily, Adapt
 import WaterLily: AbstractBody, SetBody, measure, measure_sdf!, sdf, setmap, update!, @loop, inside, loc, δ
 
 """
@@ -56,15 +56,16 @@ function measure_sdf!(d::AbstractArray{T},a::NarrowBand,t=zero(T);fastd²=one(T)
     cold = all(a.active) || !narrow!(d,a,t,fd²)
     cold && full!(d,a,t,fd²)
     signs!(d,a,t,fd²,cold); activate!(a,d,fd²)
-    any(a.active) || (full!(d,a,t,fd²); signs!(d,a,t,fd²,true); activate!(a,d,fd²)) # body left the active region
     return d
 end
 
-# measure the active region, false if the body moved too far
+# measure the active region, false if the body moved out of it
 function narrow!(d,a,t,fd²)
     (;body,active,farinside) = a
     @inside d[I] = active_sdf(body,active,I,t,fd²)
-    return !touching!(farinside,d,active,fd²)
+    touching!(farinside,d,active,fd²) && return false
+    @inside farinside[I] = d[I]^2<fd²
+    return any(farinside) # false if the body left the active region entirely
 end
 @inline active_sdf(body,active,I,t,fd²::T) where T = active[I] ? sdf(body,loc(0,I,T),t;fastd²=fd²) : √fd²
 
