@@ -4,19 +4,13 @@ using WaterLily, Adapt
 import WaterLily: AbstractBody, SetBody, measure, measure_sdf!, sdf, setmap, update!, @loop, inside, loc, δ
 
 """
-    NarrowBand(body::AbstractBody, dims; k=4, mem=Array)
+    NarrowBand(body::AbstractBody, dims; k=4, interior=hasinterior(body), mem=Array)
 
-Wrap `body` to only measure it in an active region: the cells with `d²<fastd²` at the last
-`measure_sdf!`, dilated by `k` cells. Elsewhere `d=±√fastd²`, with the sign from a warm-started
-flood fill, and `measure` returns immediately.
+Only measure `body` within `k` cells of its surface, using a warm-started flood fill for the sign elsewhere.
 
-The body must move less than a cell per measurement (the CFL condition). The active region
-contains moves of up to `(k-1)/√3` cells in any direction, so the default `k=4` gives a safety
-factor of 1.7. The first measurement, and any that moves beyond this, measure the whole domain
-and flood fill from scratch, seeded by `outside!`.
-
-  - `dims`: WaterLily domain size used to create the `Bool` cache arrays.
-  - `k`: number of cells to dilate the active region.
+  - `dims`: WaterLily domain size.
+  - `k`: dilation of the band. Covers moves of `(k-1)/√3` cells per measurement.
+  - `interior`: set `false` to skip the flood fill for bodies thinner than the band.
   - `mem`: memory location of the cache. `Array`, `CuArray`, etc.
 """
 struct NarrowBand{B<:AbstractBody,A<:AbstractArray{Bool}} <: AbstractBody
@@ -26,17 +20,17 @@ struct NarrowBand{B<:AbstractBody,A<:AbstractArray{Bool}} <: AbstractBody
     farinside::A
     active::A
     k::Int
+    interior::Bool
 end
-function NarrowBand(body::AbstractBody,dims;k=4,mem=Array)
-    near,reached,farinside,active = ntuple(_->fill!(mem{Bool}(undef,dims.+2),true),4) # all active ⇒ full measure
-    NarrowBand(body,near,reached,farinside,active,k)
+function NarrowBand(body::AbstractBody,dims;k=4,interior=hasinterior(body),mem=Array)
+    near,reached,farinside,active = ntuple(_->fill!(mem{Bool}(undef,dims.+2),true),4)
+    NarrowBand(body,near,reached,farinside,active,k,interior)
 end
 Adapt.@adapt_structure NarrowBand
-rewrap(a::NarrowBand,body) = NarrowBand(body,a.near,a.reached,a.farinside,a.active,a.k)
+rewrap(a::NarrowBand,body) = NarrowBand(body,a.near,a.reached,a.farinside,a.active,a.k,a.interior)
 setmap(a::NarrowBand;kwargs...) = rewrap(a,setmap(a.body;kwargs...))
 update!(a::NarrowBand,args...) = rewrap(a,update!(a.body,args...))
 
-# measure d,n,V: skip inactive cells (x is assumed to be loc(i,I) for some i,I)
 @inline function measure(a::NarrowBand,x::AbstractVector{T},t;fastd²=Inf) where T
     I = CartesianIndex(ntuple(i->floor(Int,x[i]+2),length(x)))
     if checkbounds(Bool,a.active,I) && !a.active[I]
@@ -65,30 +59,28 @@ function narrow!(d,a,t,fd²)
     @inside d[I] = active_sdf(body,active,I,t,fd²)
     touching!(farinside,d,active,fd²) && return false
     @inside farinside[I] = d[I]^2<fd²
-    return any(farinside) # false if the body left the active region entirely
+    return any(farinside)
 end
 @inline active_sdf(body,active,I,t,fd²::T) where T = active[I] ? sdf(body,loc(0,I,T),t;fastd²=fd²) : √fd²
 
-# any exact cell next to an inactive one?
 touching!(s,d,active,fd²) = (fill!(s,false); @inside s[I] = d[I]^2<fd² && touches_inactive(active,I); any(s))
-@inline function touches_inactive(active,I::CartesianIndex{N}) where N # ignoring ghosts
+@inline function touches_inactive(active,I::CartesianIndex{N}) where N
     for i in 1:N, s in (-1,1)
         J = I+s*δ(i,I)
         2 ≤ J[i] ≤ size(active,i)-1 && !active[J] && return true
     end; return false
 end
 
-# measure everywhere
 full!(d,a,t,fd²) = (@debug "NarrowBand: full measurement"; fill!(a.active,true); narrow!(d,a,t,fd²))
 
-# clear the flood fill seeds (d≥1) that `body` can't vouch for. Extend this for bodies without a reliable sign
-# (e.g. MeshBody). Clearing is always safe: the flood fill reaches the outside cells from the band.
+# extend these for bodies without a reliable sign or interior (e.g. MeshBody)
 outside!(reached,body,t) = nothing
 outside!(reached,body::SetBody,t) = (outside!(reached,body.a,t); outside!(reached,body.b,t))
+hasinterior(body) = true
+hasinterior(body::SetBody) = hasinterior(body.a) || hasinterior(body.b)
 
-# fill the signs: seed the flood fill where `body` vouches that d≥1 is outside (everywhere when cold, else
-# only where d is exact), flood fill, then the reached cells are outside and the far-inside cells are inside
 function signs!(d,a,t,fd²,cold)
+    a.interior || return
     (;body,near,reached,farinside) = a
     @inside farinside[I] = d[I]≥1
     outside!(farinside,body,t)
@@ -98,7 +90,6 @@ function signs!(d,a,t,fd²,cold)
     @inside d[I] = farinside[I] ? -abs(d[I]) : reached[I] ? abs(d[I]) : d[I]
 end
 
-# active region = exact cells dilated k times
 function activate!(a,d,fd²)
     (;active,near) = a; fill!(active,false)
     @inside active[I] = d[I]^2<fd²
