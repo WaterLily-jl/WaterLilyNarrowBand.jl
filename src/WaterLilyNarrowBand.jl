@@ -23,7 +23,7 @@ struct NarrowBand{B<:AbstractBody,A<:AbstractArray{Bool}} <: AbstractBody
     interior::Bool
 end
 function NarrowBand(body::AbstractBody,dims;k=4,interior=hasinterior(body),mem=Array)
-    near,reached,farinside,active = ntuple(_->fill!(mem{Bool}(undef,dims.+2),true),4)
+    near,reached,farinside,active = ntuple(_->fill!(mem{Bool}(undef,dims.+2),true),4) # full first measure, all outside if !interior
     NarrowBand(body,near,reached,farinside,active,k,interior)
 end
 Adapt.@adapt_structure NarrowBand
@@ -53,7 +53,6 @@ function measure_sdf!(d::AbstractArray{T},a::NarrowBand,t=zero(T);fastd²=one(T)
     return d
 end
 
-# measure the active region, false if the body moved out of it
 function narrow!(d,a,t,fd²)
     (;body,active,farinside) = a
     @inside d[I] = active_sdf(body,active,I,t,fd²)
