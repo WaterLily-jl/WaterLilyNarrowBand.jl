@@ -1,7 +1,7 @@
 module WaterLilyNarrowBand
 
 using WaterLily, StaticArrays, Adapt
-import WaterLily: AbstractBody, measure, measure_sdf!, sdf, setmap, update!, @loop, inside, loc, δ
+import WaterLily: AbstractBody, SetBody, measure, measure_sdf!, sdf, setmap, update!, @loop, inside, loc, δ
 
 """
     NarrowBand(body::AbstractBody, dims; k=4, mem=Array)
@@ -81,12 +81,15 @@ function full!(d,a,t,fd²)
     @debug "NarrowBand: full measurement"
     (;body,active) = a; fill!(active,true)
     @inside d[I] = active_sdf(body,active,I,t,fd²)
-    outside!(a.reached,body,d,t)
+    reached = a.reached; fill!(reached,false)
+    @inside reached[I] = d[I]≥1
+    outside!(reached,body,t)
 end
 
-# seed the flood fill with cells outside `body`: d≥1 is exact for a signed distance,
-# extend this for bodies with an unsigned far-field (e.g. MeshBody)
-outside!(reached,body,d,t) = (fill!(reached,false); @inside reached[I] = d[I]≥1)
+# clear the flood fill seeds (d≥1) that `body` can't vouch for. Extend this for bodies with an unsigned
+# far-field (e.g. MeshBody). Clearing is always safe: the flood fill reaches the outside cells from the band.
+outside!(reached,body,t) = nothing
+outside!(reached,body::SetBody,t) = (outside!(reached,body.a,t); outside!(reached,body.b,t))
 
 # fill the signs: reseed where the sign is exact, flood fill, and flip the far-inside cells
 function signs!(d,a,fd²)
