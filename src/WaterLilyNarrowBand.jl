@@ -12,8 +12,8 @@ flood fill, and `measure` returns immediately.
 
 The body must move less than a cell per measurement (the CFL condition). The active region
 contains moves of up to `(k-1)/√3` cells in any direction, so the default `k=4` gives a safety
-factor of 1.7. The first measurement, and any that moves beyond this, use the body's own
-`measure_sdf!` over the whole domain.
+factor of 1.7. The first measurement, and any that moves beyond this, measure the whole domain
+and flood fill from scratch, seeded by `outside!`.
 
   - `dims`: WaterLily domain size used to create the `Bool` cache arrays.
   - `k`: number of cells to dilate the active region.
@@ -54,20 +54,16 @@ Fill `d` with the signed distance from `a.body`, exact within `d² < max(fastd²
 function measure_sdf!(d::AbstractArray{T},a::NarrowBand,t=zero(T);fastd²=one(T)) where T
     fd² = max(T(fastd²),one(T))
     (!all(a.active) && narrow!(d,a,t,fd²)) || full!(d,a,t,fd²)
-    activate!(a,d,fd²)
-    any(a.active) || (full!(d,a,t,fd²); activate!(a,d,fd²)) # body left the active region
+    signs!(d,a,fd²); activate!(a,d,fd²)
+    any(a.active) || (full!(d,a,t,fd²); signs!(d,a,fd²); activate!(a,d,fd²)) # body left the active region
     return d
 end
 
-# measure the active region and fill the signs like a MeshBody
+# measure the active region, false if the body moved too far
 function narrow!(d,a,t,fd²)
-    (;body,near,reached,farinside,active) = a
+    (;body,active,farinside) = a
     @inside d[I] = active_sdf(body,active,I,t,fd²)
-    touching!(farinside,d,active,fd²) && return false # moved too far
-    @inside reached[I] = d[I]^2<fd² ? d[I]≥1 : reached[I] # reseed where the sign is exact
-    flood_fill!(near,reached,farinside,d)
-    @inside d[I] = farinside[I] ? -abs(d[I]) : d[I]
-    return true
+    return !touching!(farinside,d,active,fd²)
 end
 @inline active_sdf(body,active,I,t,fd²::T) where T = active[I] ? sdf(body,loc(0,I,T),t;fastd²=fd²) : √fd²
 
@@ -80,13 +76,24 @@ touching!(s,d,active,fd²) = (fill!(s,false); @inside s[I] = d[I]^2<fd² && touc
     end; return false
 end
 
-# measure everywhere with the body's own method, and seed the flood fill
+# measure everywhere, and seed the flood fill from scratch
 function full!(d,a,t,fd²)
     @debug "NarrowBand: full measurement"
-    measure_sdf!(d,a.body,t;fastd²=fd²)
-    reached = a.reached; fill!(reached,false)
-    @inside reached[I] = d[I]≥1
-    return true
+    (;body,active) = a; fill!(active,true)
+    @inside d[I] = active_sdf(body,active,I,t,fd²)
+    outside!(a.reached,body,d,t)
+end
+
+# seed the flood fill with cells outside `body`: d≥1 is exact for a signed distance,
+# extend this for bodies with an unsigned far-field (e.g. MeshBody)
+outside!(reached,body,d,t) = (fill!(reached,false); @inside reached[I] = d[I]≥1)
+
+# fill the signs: reseed where the sign is exact, flood fill, and flip the far-inside cells
+function signs!(d,a,fd²)
+    (;near,reached,farinside) = a
+    @inside reached[I] = d[I]^2<fd² ? d[I]≥1 : reached[I]
+    flood_fill!(near,reached,farinside,d)
+    @inside d[I] = farinside[I] ? -abs(d[I]) : d[I]
 end
 
 # active region = exact cells dilated k times
@@ -99,7 +106,7 @@ function activate!(a,d,fd²)
     end
 end
 
-# Flood-fill to classify points as inside or outside a closed boundary (from WaterLilyMeshBodies)
+# Flood-fill to classify points as inside or outside a closed boundary
 function flood_fill!(near, reached, scratch, sdf; cutoff=1f0)
     @. near = abs(sdf) < cutoff
     copyto!(scratch,reached)

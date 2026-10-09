@@ -1,5 +1,21 @@
 include("utils.jl")
 
+@testset "Flood Classifier" begin
+    # Closed near-band ring encloses a 6x6 interior region (indices 6:11, 6:11)
+    d = fill(5f0, 16, 16)
+    d[5, 5:12] .= 0
+    d[12, 5:12] .= 0
+    d[5:12, 5] .= 0
+    d[5:12, 12] .= 0
+    near = similar(d, Bool)
+    reached = similar(d, Bool); fill!(reached, true); reached[inside(d)] .= false
+    farinside = similar(d, Bool)
+    WaterLilyNarrowBand.flood_fill!(near, reached, farinside, d)
+    @test count(@view(farinside[6:11, 6:11])) == 36
+    @test all(@view(farinside[5, 5:12]) .== false)
+    @test all(@view(farinside[12, 5:12]) .== false)
+end
+
 # kirigami-like SetBody of wavy rings
 function rings(map;R=12f0,n=4,thk=1.2f0)
     δR = R/n
