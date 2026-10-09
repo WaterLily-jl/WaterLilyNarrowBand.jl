@@ -53,9 +53,10 @@ Fill `d` with the signed distance from `a.body`, exact within `d² < max(fastd²
 """
 function measure_sdf!(d::AbstractArray{T},a::NarrowBand,t=zero(T);fastd²=one(T)) where T
     fd² = max(T(fastd²),one(T))
-    (!all(a.active) && narrow!(d,a,t,fd²)) || full!(d,a,t,fd²)
-    signs!(d,a,fd²); activate!(a,d,fd²)
-    any(a.active) || (full!(d,a,t,fd²); signs!(d,a,fd²); activate!(a,d,fd²)) # body left the active region
+    cold = all(a.active) || !narrow!(d,a,t,fd²)
+    cold && full!(d,a,t,fd²)
+    signs!(d,a,t,fd²,cold); activate!(a,d,fd²)
+    any(a.active) || (full!(d,a,t,fd²); signs!(d,a,t,fd²,true); activate!(a,d,fd²)) # body left the active region
     return d
 end
 
@@ -76,27 +77,24 @@ touching!(s,d,active,fd²) = (fill!(s,false); @inside s[I] = d[I]^2<fd² && touc
     end; return false
 end
 
-# measure everywhere, and seed the flood fill from scratch
-function full!(d,a,t,fd²)
-    @debug "NarrowBand: full measurement"
-    (;body,active) = a; fill!(active,true)
-    @inside d[I] = active_sdf(body,active,I,t,fd²)
-    reached = a.reached; fill!(reached,false)
-    @inside reached[I] = d[I]≥1
-    outside!(reached,body,t)
-end
+# measure everywhere
+full!(d,a,t,fd²) = (@debug "NarrowBand: full measurement"; fill!(a.active,true); narrow!(d,a,t,fd²))
 
-# clear the flood fill seeds (d≥1) that `body` can't vouch for. Extend this for bodies with an unsigned
-# far-field (e.g. MeshBody). Clearing is always safe: the flood fill reaches the outside cells from the band.
+# clear the flood fill seeds (d≥1) that `body` can't vouch for. Extend this for bodies without a reliable sign
+# (e.g. MeshBody). Clearing is always safe: the flood fill reaches the outside cells from the band.
 outside!(reached,body,t) = nothing
 outside!(reached,body::SetBody,t) = (outside!(reached,body.a,t); outside!(reached,body.b,t))
 
-# fill the signs: reseed where the sign is exact, flood fill, and flip the far-inside cells
-function signs!(d,a,fd²)
-    (;near,reached,farinside) = a
-    @inside reached[I] = d[I]^2<fd² ? d[I]≥1 : reached[I]
+# fill the signs: seed the flood fill where `body` vouches that d≥1 is outside (everywhere when cold, else
+# only where d is exact), flood fill, then the reached cells are outside and the far-inside cells are inside
+function signs!(d,a,t,fd²,cold)
+    (;body,near,reached,farinside) = a
+    @inside farinside[I] = d[I]≥1
+    outside!(farinside,body,t)
+    cold && fill!(reached,false)
+    @inside reached[I] = cold || d[I]^2<fd² ? farinside[I] : reached[I]
     flood_fill!(near,reached,farinside,d)
-    @inside d[I] = farinside[I] ? -abs(d[I]) : d[I]
+    @inside d[I] = farinside[I] ? -abs(d[I]) : reached[I] ? abs(d[I]) : d[I]
 end
 
 # active region = exact cells dilated k times
