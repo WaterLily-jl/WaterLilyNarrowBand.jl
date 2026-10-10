@@ -13,21 +13,23 @@ Only measure `body` within `k` cells of its surface, using a warm-started flood 
   - `interior`: set `false` to skip the flood fill for bodies thinner than the band.
   - `mem`: memory location of the cache. `Array`, `CuArray`, etc.
 """
-struct NarrowBand{B<:AbstractBody,A<:AbstractArray{Bool}} <: AbstractBody
+struct NarrowBand{B<:AbstractBody,A<:AbstractArray{Bool},P} <: AbstractBody
     body::B
     near::A
     reached::A
     farinside::A
     active::A
+    proj::P
     k::Int
     interior::Bool
 end
 function NarrowBand(body::AbstractBody,dims;k=4,interior=hasinterior(body),mem=Array)
     near,reached,farinside,active = ntuple(_->fill!(mem{Bool}(undef,dims.+2),true),4) # full first measure, all outside if !interior
-    NarrowBand(body,near,reached,farinside,active,k,interior)
+    proj = map(n->fill!(mem{Bool}(undef,n+2),false),dims) # active cells projected on each axis, empty ⇒ full first measure
+    NarrowBand(body,near,reached,farinside,active,proj,k,interior)
 end
 Adapt.@adapt_structure NarrowBand
-rewrap(a::NarrowBand,body) = NarrowBand(body,a.near,a.reached,a.farinside,a.active,a.k,a.interior)
+rewrap(a::NarrowBand,body) = NarrowBand(body,a.near,a.reached,a.farinside,a.active,a.proj,a.k,a.interior)
 setmap(a::NarrowBand;kwargs...) = rewrap(a,setmap(a.body;kwargs...))
 update!(a::NarrowBand,args...) = rewrap(a,update!(a.body,args...))
 
@@ -47,22 +49,24 @@ Fill `d` with the signed distance from `a.body`, exact within `d² < max(fastd²
 """
 function measure_sdf!(d::AbstractArray{T},a::NarrowBand,t=zero(T);fastd²=one(T)) where T
     fd² = max(T(fastd²),one(T))
-    cold = all(a.active) || !narrow!(d,a,t,fd²)
-    cold && full!(d,a,t,fd²)
-    signs!(d,a,t,fd²,cold); activate!(a,d,fd²)
+    R = box(a)
+    cold = isempty(R) || !narrow!(d,a,R,t,fd²)
+    cold && (R = inside(d); full!(d,a,R,t,fd²))
+    signs!(d,a,t,fd²,cold); activate!(a,d,R,fd²)
     return d
 end
 
-function narrow!(d,a,t,fd²)
-    (;body,active,farinside) = a
-    @inside d[I] = active_sdf(body,active,I,t,fd²)
-    touching!(farinside,d,active,fd²) && return false
-    @inside farinside[I] = d[I]^2<fd²
+function narrow!(d,a,R,t,fd²)
+    (;body,active,farinside) = a; D = √fd²
+    @inside d[I] = D
+    @loop d[I] = active_sdf(body,active,I,t,fd²) over I ∈ R
+    touching!(farinside,d,active,R,fd²) && return false
+    @loop farinside[I] = d[I]^2<fd² over I ∈ R
     return any(farinside)
 end
 @inline active_sdf(body,active,I,t,fd²::T) where T = active[I] ? sdf(body,loc(0,I,T),t;fastd²=fd²) : √fd²
 
-touching!(s,d,active,fd²) = (fill!(s,false); @inside s[I] = d[I]^2<fd² && touches_inactive(active,I); any(s))
+touching!(s,d,active,R,fd²) = (fill!(s,false); @loop s[I] = d[I]^2<fd² && touches_inactive(active,I) over I ∈ R; any(s))
 @inline function touches_inactive(active,I::CartesianIndex{N}) where N
     for i in 1:N, s in (-1,1)
         J = I+s*δ(i,I)
@@ -70,7 +74,10 @@ touching!(s,d,active,fd²) = (fill!(s,false); @inside s[I] = d[I]^2<fd² && touc
     end; return false
 end
 
-full!(d,a,t,fd²) = (@debug "NarrowBand: full measurement"; fill!(a.active,true); narrow!(d,a,t,fd²))
+full!(d,a,R,t,fd²) = (@debug "NarrowBand: full measurement"; fill!(a.active,true); narrow!(d,a,R,t,fd²))
+box(a) = CartesianIndices(map(span,a.proj))
+span(p) = (i = findall(Array(p)); isempty(i) ? (1:0) : first(i):last(i))
+grow(R,k,d) = (δ = k*oneunit(first(R)); (first(R)-δ:last(R)+δ) ∩ inside(d))
 
 # extend these for bodies without a reliable sign or interior (e.g. MeshBody)
 outside!(reached,body,t) = nothing
@@ -89,14 +96,16 @@ function signs!(d,a,t,fd²,cold)
     @inside d[I] = farinside[I] ? -abs(d[I]) : reached[I] ? abs(d[I]) : d[I]
 end
 
-function activate!(a,d,fd²)
-    (;active,near) = a; fill!(active,false)
-    @inside active[I] = d[I]^2<fd²
+function activate!(a,d,R,fd²)
+    (;active,near,proj) = a; fill!(active,false); foreach(p->fill!(p,false),proj)
+    @loop active[I] = d[I]^2<fd² over I ∈ R
+    R = grow(R,a.k,d)
     for _ in 1:a.k
-        @inside near[I] = flood_update(I,active)
-        @inside active[I] = near[I]
+        @loop near[I] = flood_update(I,active) over I ∈ R
+        @loop set_active!(active,near,proj,I) over I ∈ R
     end
 end
+@inline set_active!(active,near,proj,I) = (active[I] = near[I]; near[I] && foreach((p,i)->(p[i] = true),proj,Tuple(I)); nothing)
 
 # Flood-fill to classify points as inside or outside a closed boundary
 function flood_fill!(near, reached, scratch, sdf; cutoff=1f0)
