@@ -76,6 +76,7 @@ end
 
 full!(d,a,R,t,fd²) = (@debug "NarrowBand: full measurement"; fill!(a.active,true); narrow!(d,a,R,t,fd²))
 box(a) = CartesianIndices(map(span,a.proj))
+@static isdefined(WaterLily,:bbox) && (WaterLily.bbox(a::NarrowBand,R) = box(a) ∩ R)
 span(p) = (i = findall(Array(p)); isempty(i) ? (1:0) : first(i):last(i))
 grow(R,k,d) = (δ = k*oneunit(first(R)); (first(R)-δ:last(R)+δ) ∩ inside(d))
 
