@@ -24,6 +24,7 @@ struct NarrowBand{B<:AbstractBody,A<:AbstractArray{Bool},P} <: AbstractBody
     interior::Bool
 end
 function NarrowBand(body::AbstractBody,dims;k=4,interior=hasinterior(body),mem=Array)
+    k ≥ 1 || throw(ArgumentError("NarrowBand needs k ≥ 1"))
     near,reached,farinside,active = ntuple(_->fill!(mem{Bool}(undef,dims.+2),true),4) # full first measure, all outside if !interior
     proj = map(n->fill!(mem{Bool}(undef,n+2),false),dims) # active cells projected on each axis, empty ⇒ full first measure
     NarrowBand(body,near,reached,farinside,active,proj,k,interior)
@@ -48,6 +49,7 @@ end
 Fill `d` with the signed distance from `a.body`, exact within `d² < max(fastd²,1)` and `±√fastd²` outside.
 """
 function measure_sdf!(d::AbstractArray{T},a::NarrowBand,t=zero(T);fastd²=one(T)) where T
+    size(d) == size(a.active) || throw(DimensionMismatch("NarrowBand built for dims=$(size(a.active).-2), but the simulation has $(size(d).-2)"))
     fd² = max(T(fastd²),one(T))
     R = box(a)
     cold = isempty(R) || !narrow!(d,a,R,t,fd²)
@@ -112,10 +114,12 @@ end
 function flood_fill!(near, reached, scratch, sdf; cutoff=1f0)
     @. near = abs(sdf) < cutoff
     copyto!(scratch,reached)
-    for _ in 1:min(size(near)...)÷2
+    n = min(size(near)...)÷2
+    for k in 1:n
         @inside scratch[I] = flood_update(I, reached, near)
         @inside reached[I] = flood_update(I, scratch, near)
         reached == scratch && break # converged
+        k == n && @warn "NarrowBand: flood fill did not converge in $n iterations, some cells may have the wrong sign"
     end
     @. scratch = !near && !reached # far-inside
 end

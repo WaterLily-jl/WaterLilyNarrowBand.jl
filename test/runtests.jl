@@ -55,3 +55,9 @@ end
         @test same(a,b,T(n)) == (true,0)
     end
 end
+
+@testset "argument checks" begin
+    body = AutoBody((x,t)->√sum(abs2,x)-4)
+    @test_throws ArgumentError NarrowBand(body,(16,16);k=0)
+    @test_throws DimensionMismatch Simulation((32,32),(1,0),8;body=NarrowBand(body,(16,16)))
+end
