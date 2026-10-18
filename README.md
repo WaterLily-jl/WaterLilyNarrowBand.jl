@@ -3,7 +3,7 @@
 A companion package to [WaterLily.jl](https://github.com/WaterLily-jl/WaterLily.jl) that speeds up measuring moving bodies. `NarrowBand(body, dims)` wraps any `AbstractBody` so it is only evaluated in a thin band of cells around its surface, giving identical BDIM fields and forces.
 
 ```julia
-] add https://github.com/weymouth/WaterLilyNarrowBand.jl
+] add WaterLilyNarrowBand
 ```
 
 ### Usage
