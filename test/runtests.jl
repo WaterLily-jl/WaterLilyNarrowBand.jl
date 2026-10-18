@@ -54,6 +54,7 @@ end
         a.body,b.body = setmap.((a.body,b.body);x₀=x₀+Δx)
         @test same(a,b,T(n)) == (true,0)
     end
+    @test a.body.map == b.body.map
 end
 
 @testset "argument checks" begin

@@ -1,7 +1,7 @@
 name = "WaterLilyNarrowBand"
 uuid = "c192da82-d685-4e30-8b0b-b18c69bedd0a"
 authors = ["Gabriel Weymouth <gabriel.weymouth@gmail.com>"]
-version = "0.1.0"
+version = "0.1.1"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
