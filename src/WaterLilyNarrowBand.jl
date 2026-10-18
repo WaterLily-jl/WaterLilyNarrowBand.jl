@@ -33,6 +33,7 @@ Adapt.@adapt_structure NarrowBand
 rewrap(a::NarrowBand,body) = NarrowBand(body,a.near,a.reached,a.farinside,a.active,a.proj,a.k,a.interior)
 setmap(a::NarrowBand;kwargs...) = rewrap(a,setmap(a.body;kwargs...))
 update!(a::NarrowBand,args...) = rewrap(a,update!(a.body,args...))
+Base.getproperty(a::NarrowBand,s::Symbol) = s===:map ? getfield(a,:body).map : getfield(a,s)
 
 @inline function measure(a::NarrowBand,x::AbstractVector{T},t;fastd²=Inf) where T
     I = CartesianIndex(ntuple(i->floor(Int,x[i]+2),length(x)))
