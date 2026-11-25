@@ -1,7 +1,7 @@
 module WaterLilyNarrowBand
 
 using WaterLily, Adapt
-import WaterLily: AbstractBody, SetBody, measure, measure_sdf!, sdf, setmap, update!, @loop, inside, loc, δ
+import WaterLily: AbstractBody, AutoBody, NoBody, SetBody, measure, measure_sdf!, sdf, setmap, update!, @loop, inside, loc, δ
 
 """
     NarrowBand(body::AbstractBody, dims; k=4, interior=hasinterior(body), mem=Array)
@@ -88,6 +88,10 @@ outside!(reached,body,t) = nothing
 outside!(reached,body::SetBody,t) = (outside!(reached,body.a,t); outside!(reached,body.b,t))
 hasinterior(body) = true
 hasinterior(body::SetBody) = hasinterior(body.a) || hasinterior(body.b)
+# `d < 0` is trusted inside, even where a pseudo-sdf has |d| ≥ 1 next to the surface
+hassign(body) = false
+hassign(::Union{AutoBody,NoBody}) = true
+hassign(body::SetBody) = hassign(body.a) && hassign(body.b)
 
 function signs!(d,a,t,fd²,cold)
     a.interior || return
@@ -96,7 +100,7 @@ function signs!(d,a,t,fd²,cold)
     outside!(farinside,body,t)
     cold && fill!(reached,false)
     @inside reached[I] = cold || d[I]^2<fd² ? farinside[I] : reached[I]
-    flood_fill!(near,reached,farinside,d)
+    flood_fill!(near,reached,farinside,d;signed=hassign(body))
     @inside d[I] = farinside[I] ? -abs(d[I]) : reached[I] ? abs(d[I]) : d[I]
 end
 
@@ -112,8 +116,9 @@ end
 @inline set_active!(active,near,proj,I) = (active[I] = near[I]; near[I] && foreach((p,i)->(p[i] = true),proj,Tuple(I)); nothing)
 
 # Flood-fill to classify points as inside or outside a closed boundary
-function flood_fill!(near, reached, scratch, sdf; cutoff=1f0)
-    @. near = abs(sdf) < cutoff
+# `signed` blocks every `sdf < cutoff` cell, else only `|sdf| < cutoff`
+function flood_fill!(near, reached, scratch, sdf; cutoff=1f0, signed=false)
+    signed ? (@. near = sdf < cutoff) : (@. near = abs(sdf) < cutoff)
     copyto!(scratch,reached)
     n = min(size(near)...)÷2
     for k in 1:n
