@@ -13,6 +13,15 @@ include("utils.jl")
     @test count(@view(farinside[6:11, 6:11])) == 36
     @test all(@view(farinside[5, 5:12]) .== false)
     @test all(@view(farinside[12, 5:12]) .== false)
+
+    # a steep pseudo-sdf wall cell (d ≤ -1) only blocks the fill when the sign is trusted
+    d[5, 8] = -1.5f0
+    for (signed, n) in ((false, 0), (true, 36))
+        fill!(reached, true); reached[inside(d)] .= false
+        WaterLilyNarrowBand.flood_fill!(near, reached, farinside, d; signed)
+        @test count(@view(farinside[6:11, 6:11])) == n
+    end
+    @test WaterLilyNarrowBand.hassign(AutoBody((x,t)->1) - AutoBody((x,t)->2))
 end
 
 function rings(map;R=12f0,n=4,thk=1.2f0)
